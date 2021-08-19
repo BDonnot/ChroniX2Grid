@@ -1,0 +1,13 @@
+Pmax,name,type,x,y
+21.7,load_1_0,residential,180,10
+94.2,load_2_1,residential,646,10
+14.9,load_13_10,residential,646,226
+47.8,load_3_2,residential,216,226
+7.6,load_4_3,residential,216,334
+11.2,load_5_4,residential,606,334
+29.5,load_8_5,residential,502,388
+9.0,load_9_6,residential,359,442
+3.5,load_10_7,residential,128,550
+6.1,load_11_8,residential,216,550
+13.5,load_12_9,residential,502,496
+
