@@ -82,7 +82,13 @@ To provide --input-data and --output-folder folders and specify --case grid case
  ```commandline
 chronix2grid --mode RLTK --output-folder ChroniX2Grid_path/getting_started/example/output --input-folder ChroniX2Grid_path/getting_started/example/input --ignore-warnings --weeks 8 --case case118_l2rpn_wcci --n_scenarios 1 --start-date 2012-01-01 --by-n-weeks 4
 ```
-
+#### KPIs generation with existing chronics as in grid2op env
+If you already generated your data such as from a grid2op environment, you can generate KPIs afterwards under this cli given that a *paramsKPI.json* exists in the *input-folder/kpi/grid_case*
+ ```commandline
+ chronix2grid --mode K --output-folder pathTo/data_grid2op/l2rpn_wcci_2022/chronics --input-folder ChroniX2Grid_path/input_data --ignore-warnings --weeks 4 --case case118_l2rpn_wcci_2022 --n_scenarios 1 
+```
+In your "chronics" folder, this will create a "kpi" folder with subfolders of KPIs per chronic 
+ 
 ### WARNING
 In order to limit the size of the output and the running time for this example, chronics are only generated for 8 weeks.
 This implicates that some kpis that defined on a whole year will not be exploitable for this example.
@@ -182,6 +188,10 @@ Some general parameters have to be set in *INPUT_FOLDER/kpi/paramsKPI.json*
 - **night_hours**: dictionary to provide night hours for each season of year
 - **seasons**: dictionary to provide months in each season of year
 
+**Note**: if you just want to generate the KPIs from your synthetic data without comparison to reference chronics, you can set 
+```json
+"comprison":null
+```
 ## Model interface
 
 All generation submodules (LRDT) have a modular backend. 

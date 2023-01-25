@@ -1,0 +1,94 @@
+eolien en mer: pmax = 250
+solaire: 93 ou 80
+eolien terrestre : 84.0
+
+
+### Adapter la prod a rapport RTE 2050
+Par rapport au réseau d'avant:
+- enlevé les "petits" thermiques (pmax 50. ou 100.), remplacés par du solaire
+- augmenté le nombre de "gros" thermiques (gaz avec CSC)
+- mis du "gros éolien" à gauche (pour "simuler" des cotes)
+- gen sub 11 => gros éolien (était hydro), gen sub 14 => hydro (était thermique)
+- remplacer les thermiques "moyens" (rampes 4.3 et 5.4) et par du nucléaire (ça serait des SMR)
+- augmenté les rampes du nucléaire 2.8 -> 3.5
+- augmenté les rampes de l'hydraulique 10.4 -> 11.2
+- augmenté les rampes du petit nucléaire 4.3 -> 5.3
+- on met plus d'éolien "en mer" à gauche, on rajoute du nucléaire au centre (NON)
+
+### Distribution des renouvelables
+Changement sur le RES:
+
+- [NON] on remet les parametres de la sandbox... la ça marche pas du tout, ça ne ressemble pas a du vent , c'était   , je mets 
+- on repart des parameters de la sandbox pour le vent qu'on modifie pour les renre plus realistes:
+  "std_short_wind_noise": 0.2,
+  "std_medium_wind_noise": 0.15,
+  "std_long_wind_noise": 0.2
+  "dx_corr": 1000,
+  "dy_corr": 1000,
+  "long_wind_corr": 10080,
+  "medium_wind_corr": 360,
+  "short_wind_corr": 60,
+  
+ au lieu de 
+   "std_short_wind_noise": 0.1,
+  "std_medium_wind_noise": 0.15,
+  "std_long_wind_noise": 0.2,
+  "dx_corr": 250,
+  "dy_corr": 250,
+  "long_wind_corr": 5000,
+  "medium_wind_corr": 720
+  "short_wind_corr": 120
+  
+  
+Changer les coordonnees des renouvelables sur les memes postes (pour ne pas que les series soient identiques)  +/-30 par coords pour l'un des gen
+ 
+### Ajout encore de renouvelables:
+vent => 84 MW => 150 MW
+Solaire => 93 MW => 130 MW; 80 MW => 100 MW
+
+### Pertes
+orig: 0.58%, 2.71%, 6.72%
+
+200.0,0.0,wind,11,,,0.0,0.0,0.0,0,0.0,
+300.0,0.0,thermal,65,8.5,8.5,96.0,48.0,148.0,0,54436.1,
+after above: 0.60%, 2.59%, 5.85%
+
+gen_112_60,80.0,0.0,solar,112,,,0.0,0.0,0.0,0,0.0,
+gen_104_56,250.0,0.0,thermal,104,5.7,5.7,24.0,24.0,138.0,0,2052.3,
+after above: 0.57%, 2.54%, 5.45%
+
+### Faire en sorte de bien "repartir" les pertes sur tous les générateurs
+ => ajout de parametres "slack_pmin" et "slack_pmax" pour le slack (l'opf va limiter sa productions entre ces bornes)
+ => ajout de parametres "slack_ramp_limit_ratio" pour le slack: pour etre "plus sur" que ses rampes seront bien limitées (on les multiplie par ce ratio dans l'opf)
+ => ajout du parametre "PmaxErrorCorrRatio" pour diminuer les pmax dans l'opf (pour garder plus de marges en temps reel)
+ => ajout du parametre "RampErrorCorrRatio" pour diminuer les rampes dans l'opf (pour garder plus de marges en temps reel)
+
+
+### Probleme : trop de correlation
+tentative de bouger les parametres 
+  "dx_corr": 1000,
+  "dy_corr": 1000,
+  
+Mise à
+
+  "dx_corr": 800,
+  "dy_corr": 800,
+ 
+
+Pour le solaire, ajout du parametre:
+ "scale_solar_coord_for_correlation": 5.0
+ qui va éloigner les générateurs solaires les uns des autres (mais ce n'est pas assez)
+ 
+[INUTILE] passage de "solar_corr": 20 à "solar_corr": 1 nope, inutile
+[NON] passage de "std_solar_noise": 0.1 à "std_solar_noise": 0.3 [casse beaucoup la dynamique d'un seul generateur]
+Pour corriger le solaire => passage à "solar_corr": 300000 et scale_solar_coord_for_correlation": 2.0 et "std_solar_noise": 0.8, ajout du parametre de "mean_solar_pattern": 1.0
+
+### Recap
+Problemes rencontres:
+- date de debut: attention au jour de la semaine (a eu besoin d'aller loin dans le code)
+- solaire trop bruités (facile à résoudre)
+- pas de "curtailment" pour raison EoD (a eu besoin d'aller loin dans le code)
+- le vent ne ressemble absolument pas a du vent !
+- quand 2 prods renouvelables de meme type sont sur le meme poste, elles ont la meme prod exactement !
+- tourjours de prods renouvelables au dessus de pmax !
+- trop de pertes

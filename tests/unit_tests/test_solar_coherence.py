@@ -94,7 +94,7 @@ class TestLoadProdCoherence(unittest.TestCase):
             output_directory=self.generation_output_folder
         )
         general_config_manager.validate_configuration()
-        params = general_config_manager.read_configuration()
+        params, prods_charac, loads_charac = general_config_manager.read_configuration()
 
         res_config_manager = def_bk.RENEWABLE_GENERATION_CONFIG(
             name="Renewables Generation",

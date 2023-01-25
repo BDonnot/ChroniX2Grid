@@ -166,7 +166,33 @@ class GeneralConfigManager(ConfigManager):
                 params[key] = float(value)
             except ValueError:
                 params[key] = pd.to_datetime(value, format='%Y-%m-%d')
-        return params
+
+        try:
+            loads_charac = pd.read_csv(
+                os.path.join(self.root_directory, self.input_directories['case'],
+                             'loads_charac.csv'),
+                sep=',')
+            names = loads_charac['name']  # to generate error if separator is wrong
+
+        except:
+            loads_charac = pd.read_csv(
+                os.path.join(self.root_directory, self.input_directories['case'],
+                             'loads_charac.csv'),
+                sep=';')
+        try:
+            prods_charac = pd.read_csv(
+                os.path.join(self.root_directory, self.input_directories['case'],
+                             'prods_charac.csv'),
+                sep=',')
+            names = prods_charac['name']  # to generate error if separator is wrong
+
+        except:
+            prods_charac = pd.read_csv(
+                os.path.join(self.root_directory, self.input_directories['case'],
+                             'prods_charac.csv'),
+                sep=';')
+
+        return params,prods_charac,loads_charac
 
 class LoadsConfigManager(ConfigManager):
     """

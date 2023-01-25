@@ -93,7 +93,7 @@ class TestLoadProdCoherence(unittest.TestCase):
         )
 
         general_config_manager.validate_configuration()
-        params = general_config_manager.read_configuration()
+        params,prods_charac, loads_charac = general_config_manager.read_configuration()
 
         scenario_path = os.path.join(
             self.generation_output_folder,

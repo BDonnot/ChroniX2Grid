@@ -336,12 +336,9 @@ def chronics_to_kpi(chronics_repo, timestep, params, thermal = True):
 
     print("Importing and formatting synthetic chronics")
 
-    # Rebuild timeline
-    datetime_index = pd.date_range(
-        start=params['start_date'],
-        end=params['end_date'],
-        freq=str(params['dt']) + 'min')
 
+    has_price=False
+    price=None
     if thermal:
         ## Format when all dispatch is generated
 
@@ -350,10 +347,12 @@ def chronics_to_kpi(chronics_repo, timestep, params, thermal = True):
                              sep=';', decimal='.')
         load_p = pd.read_csv(os.path.join(chronics_repo, 'load_p.csv.bz2'),
                              sep=';', decimal='.')
-        price = pd.read_csv(os.path.join(chronics_repo, 'prices.csv.bz2'),
-                            sep=';', decimal='.')
 
-        price['Time'] = datetime_index[:len(price)]
+        path_file_prices=os.path.join(chronics_repo, 'prices.csv.bz2')
+        if(os.path.exists(path_file_prices)):
+            price = pd.read_csv(os.path.join(chronics_repo, 'prices.csv.bz2'),
+                                sep=';', decimal='.')
+            has_price=True
 
     else:
         ## Format synthetic chronics when no dispatch has been done
@@ -363,8 +362,17 @@ def chronics_to_kpi(chronics_repo, timestep, params, thermal = True):
 
         load_p = pd.read_csv(os.path.join(chronics_repo, 'load_p.csv.bz2'), sep=';', decimal='.')
 
+    # Rebuild timeline
+    datetime_index = pd.date_range(
+        start=params['start_date'],
+        #end=params['end_date'],
+        periods=prod_p.shape[0],
+        freq=str(params['dt']) + 'min')
+
     prod_p['Time'] = datetime_index[:len(prod_p)]
     load_p['Time'] = datetime_index[:len(load_p)]
+    if has_price:
+        price['Time'] = datetime_index[:len(price)]
 
     # Optional resampling
     load_p['Time'] = pd.to_datetime(load_p['Time'])
@@ -378,10 +386,11 @@ def chronics_to_kpi(chronics_repo, timestep, params, thermal = True):
     # Return with price if dispatch has been made
     if not thermal:
         return prod_p, load_p
-    if thermal:
-        price['Time'] = pd.to_datetime(price['Time'])
-        price.set_index('Time', drop=True, inplace=True)
-        price = price.resample(timestep).first()
+    else:#if thermal:
+        if(price is not None):
+            price['Time'] = pd.to_datetime(price['Time'])
+            price.set_index('Time', drop=True, inplace=True)
+            price = price.resample(timestep).first()
         return prod_p, load_p, price
 
 

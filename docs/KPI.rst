@@ -23,6 +23,13 @@ The input files that have to be provided by the user are the following:
 * *paramsKPI.json* - a configuration dictionary
 * *France/* - A folder containing the reference chronics. It can be names however you want. We take the example of french chronics here
 
+Note that if you already generated your data such as from a grid2op environment, you can generate KPIs afterwards under this cli given that a *paramsKPI.json* exists in the *input-folder/kpi/grid_case*
+
+
+``chronix2grid --mode K --output-folder pathTo/data_grid2op/l2rpn_wcci_2022/chronics --input-folder ChroniX2Grid_path/input_data --ignore-warnings --weeks 4 --case case118_l2rpn_wcci_2022 --n_scenarios 1``
+
+In your "chronics" folder, this will create a "kpi" folder with subfolders of KPIs per chronic
+
 .. _reference-chronics:
 
 Available reference chronics
@@ -51,6 +58,11 @@ Else, if only wind and solar chronics have been generated, chronics from renewab
    Locations of wind generators requested in Renewable Ninja API
 
 A price chronic can also be provided optionally in order to compute high and low price KPIs (see :ref:`hydro-thermal-kpi`)
+
+**Note**: if you just want to generate the KPIs from your synthetic data without comparison to reference chronics, you can set
+
+* "comprison":null
+
 
 Configuration json
 ^^^^^^^^^^^^^^^^^^^

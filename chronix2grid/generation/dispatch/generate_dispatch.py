@@ -80,8 +80,9 @@ def main(dispatcher, input_folder, output_folder, grid_folder, seed, params, par
         )
         #####
         # These column should be removed as wind and solar were not considered in the opf here
-        dispatch_results.chronix.prods_dispatch = dispatch_results.chronix.prods_dispatch.drop(
-            ["agg_wind", "agg_solar"], axis=1)
+        if(dispatch_results):
+            dispatch_results.chronix.prods_dispatch = dispatch_results.chronix.prods_dispatch.drop(
+                ["agg_wind", "agg_solar"], axis=1)
 
     dispatcher.save_results(params, output_folder)
 

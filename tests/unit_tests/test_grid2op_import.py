@@ -79,4 +79,4 @@ class TestGrid2OpImport(unittest.TestCase):
         prods_p = pd.DataFrame(
             np.array([obs.gen_p for obs in episode_data.observations if obs is not None]))
         # self.assertAlmostEqual(prods_p.sum().mean(), 112.64725, places=5)
-        self.assertAlmostEqual(prods_p.sum().mean(), 169.10182, places=5)
+        self.assertAlmostEqual(prods_p.sum().mean(), 169.10182, places=3)

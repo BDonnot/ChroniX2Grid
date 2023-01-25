@@ -1,0 +1,18 @@
+{
+  "comparison": null,
+  "timestep": "5min",
+  "cloudiness_quantile":0.95,
+  "cloudiness_factor":0.85,
+  "night_hours": {
+    "summer": ["06:00", "22:00"],
+    "fall": ["07:00", "20:00"],
+    "winter": ["08:00", "18:00"],
+    "spring": ["07:00", "20:00"]
+  },
+  "seasons": {
+    "summer": [6,7,8],
+    "fall": [9,10,11],
+    "winter": [12,1,2],
+    "spring": [3,4,5]
+  }
+}

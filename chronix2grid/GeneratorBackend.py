@@ -89,8 +89,12 @@ class GeneratorBackend:
             path of folder containing inputs
         output_folder: ``str``
             path where outputs will be written (intermediate folder case/year/scenario will be used)
+        scen_names: ``list``
+            list of strings of scenario names to generate
+        time_params: ``dict``
+            dictionary with 'weeks', 'start_date' and 'year' information
         mode: ``str``
-            options to launch certain parts of the generation process : L load R renewable T thermal
+            options to launch certain parts of the generation process : L load R renewable T thermal D Loss
         scenario_id: ``int`` or ``None``
             Id of scenario
         seed_for_loads: ``int`` or ``None``
@@ -127,42 +131,8 @@ class GeneratorBackend:
             seeds_for_disp = [seed_for_disp]
 
         # dispatch_input_folder, dispatch_input_folder_case, dispatch_output_folder = gu.make_generation_input_output_directories(input_folder, case, year, output_folder)
-        general_config_manager = self.general_config_manager(
-            name="Global Generation",
-            root_directory=input_folder,
-            input_directories=dict(case=case),
-            required_input_files=dict(case=['params.json']),
-            output_directory=output_folder
-        )
-        general_config_manager.validate_configuration()
-        params = general_config_manager.read_configuration()
-
-        params.update(time_params)
-        params = generation_utils.updated_time_parameters_with_timestep(params, params['dt'])
-
-        load_config_manager = self.load_config_manager(
-            name="Loads Generation",
-            root_directory=input_folder,
-            input_directories=dict(case=case, patterns='patterns'),
-            required_input_files=dict(case=['loads_charac.csv', 'params_load.json'],
-                                      patterns=['load_weekly_pattern.csv']),
-            output_directory=output_folder
-        )
-        load_config_manager.validate_configuration()
-        params_load, loads_charac = load_config_manager.read_configuration()
-        params_load.update(params)
-
-        res_config_manager = self.res_config_manager(
-            name="Renewables Generation",
-            root_directory=input_folder,
-            input_directories=dict(case=case, patterns='patterns'),
-            required_input_files=dict(case=['prods_charac.csv', 'params_res.json'],
-                                      patterns=['solar_pattern.npy']),
-            output_directory=output_folder
-        )
-        params_res, prods_charac = res_config_manager.read_configuration()
-        params_res.update(params)
-
+        config_manager_dict=self.get_config_managers(input_folder, case, output_folder, mode)
+        params_dict,prods_charac,loads_charac = self.get_params_charact(time_params,config_manager_dict)
 
         grid_folder = os.path.join(input_folder, case)
 
@@ -182,44 +152,28 @@ class GeneratorBackend:
 
             print("================ Generating " + scenario_name + " ================")
             if 'L' in mode:
-                load, load_forecasted = self.do_l(scenario_folder_path, seed_load, params_load, loads_charac, load_config_manager)
-                params.update(params_load)
+                load, load_forecasted = self.do_l(scenario_folder_path, seed_load, params_dict['L'], loads_charac, config_manager_dict['L'])
+                #params.update(params_load)
             if 'R' in mode:
-                prod_solar, prod_solar_forecasted, prod_wind, prod_wind_forecasted = self.do_r(scenario_folder_path, seed_res, params_res,
+                prod_solar, prod_solar_forecasted, prod_wind, prod_wind_forecasted = self.do_r(scenario_folder_path, seed_res, params_dict['R'],
                                                                                                prods_charac,
-                                                                                               res_config_manager)
-                params.update(params_res)
+                                                                                               config_manager_dict['R'])
+                #params.update(params_res)
             if 'D' in mode:
-                loss_config_manager = self.loss_config_manager(
-                    name="Loss",
-                    root_directory=input_folder,
-                    output_directory=output_folder,
-                    input_directories=dict(params=case),
-                    required_input_files=dict(params=['params_loss.json'])
-                )
 
                 self.do_d(input_folder, scenario_folder_path,
                                      load, prod_solar, prod_wind,
-                                     params, loss_config_manager)
+                                     params_dict['G'], config_manager_dict['D'])
             if 'T' in mode:
                 if self.dispatch_backend_class is None:
                     warnings.warn(MSG_NO_DISPATCH_BACKEND, UserWarning)
                 else:
-                    dispath_config_manager = self.dispatch_config_manager(
-                        name="Dispatch",
-                        root_directory=input_folder,
-                        output_directory=output_folder,
-                        input_directories=dict(params=case),
-                        required_input_files=dict(params=['params_opf.json'])
-                    )
-                    dispath_config_manager.validate_configuration()
-                    params_opf = dispath_config_manager.read_configuration()
 
                     dispatch_results = self.do_t(input_folder, scenario_name, load, prod_solar, prod_wind,
-                                                 grid_folder, scenario_folder_path, seed_disp, params, params_opf, loss)
+                                                 grid_folder, scenario_folder_path, seed_disp, params_dict['G'], params_dict['T'], loss)
 
             print('\n')
-        return params, loads_charac, prods_charac
+        return params_dict['G'], loads_charac, prods_charac
 
     def do_l(self, scenario_folder_path, seed_load, params, loads_charac, load_config_manager):
         """
@@ -341,3 +295,127 @@ class GeneratorBackend:
                                                  grid_folder, seed_disp, params, params_opf)
         dispatch_results = generator_dispatch.run()
         return dispatch_results
+
+    def get_params_charact(self,time_params,config_manager_dict):
+        """
+          Function to load config_managers for each activated mode in 'LRTD' as well as the general config manager
+
+          Parameters
+          ----------
+          config_manager_dict: ``dict``
+              config managers for each activated mode 'L','R','T','D' and general config manager at 'G'
+          time_params: ``dict``
+              dictionary with 'weeks', 'start_date' and 'year' information
+          Returns
+          -------
+          params_dict: ``dict``
+              params for each activated mode 'L','R','T','D' and general params at 'G'
+          """
+        params_dict=dict()
+        params,prods_charac,loads_charac = config_manager_dict['G'].read_configuration()
+        #params = config_manager_dict['G'].read_configuration()
+
+        params.update(time_params)
+        params = generation_utils.updated_time_parameters_with_timestep(params, params['dt'])
+
+        #loads_charac=None
+        #prods_charac=None
+
+        if('L' in config_manager_dict.keys()):
+            params_load, loads_charac = config_manager_dict['L'].read_configuration()
+            params_load.update(params)
+            params_dict['L']=params_load
+
+        if('R' in config_manager_dict.keys()):
+            params_res, prods_charac = config_manager_dict['R'].read_configuration()
+            params_res.update(params)
+            params_dict['R'] = params_res
+
+        if('T' in config_manager_dict.keys()):
+            params_opf = config_manager_dict['T'].read_configuration()
+            #should we update params with params_opf ?
+            params_opf.update(params)
+            params_dict['T'] = params_opf
+        params_dict['G']=params
+
+        return params_dict,prods_charac,loads_charac
+
+    def get_config_managers(self,input_folder,case,output_folder,mode):
+        """
+          Function to load config_managers for each activated mode in 'LRTD' as well as the general config manager
+
+          Parameters
+          ----------
+          case: ``str``
+              name of case to study (must be a folder within input_folder)
+          n_scenarios: ``int``
+              number of desired scenarios to generate for the same timescale
+          input_folder: ``str``
+              path of folder containing inputs
+          output_folder: ``str``
+              path where outputs will be written (intermediate folder case/year/scenario will be used)
+          mode: ``str``
+              options to launch certain parts of the generation process : L load R renewable T thermal D Loss
+
+          Returns
+          -------
+          config_manager_dict: ``dict``
+              config managers for each activated mode 'L','R','T','D' and general config manager at 'G'
+          """
+        config_manager_dict=dict()
+
+        general_config_manager = self.general_config_manager(
+            name="Global Generation",
+            root_directory=input_folder,
+            input_directories=dict(case=case),
+            required_input_files=dict(case=['loads_charac.csv','prods_charac.csv','params.json']),
+            output_directory=output_folder
+        )
+        general_config_manager.validate_configuration()
+        config_manager_dict['G']=general_config_manager
+        if 'L' in mode:
+            load_config_manager = self.load_config_manager(
+                name="Loads Generation",
+                root_directory=input_folder,
+                input_directories=dict(case=case, patterns='patterns'),
+                required_input_files=dict(case=['loads_charac.csv', 'params_load.json'],
+                                          patterns=['load_weekly_pattern.csv']),
+                output_directory=output_folder
+            )
+            load_config_manager.validate_configuration()
+            config_manager_dict['L']=load_config_manager
+
+        if 'R' in mode:
+            res_config_manager = self.res_config_manager(
+                name="Renewables Generation",
+                root_directory=input_folder,
+                input_directories=dict(case=case, patterns='patterns'),
+                required_input_files=dict(case=['prods_charac.csv', 'params_res.json'],
+                                          patterns=['solar_pattern.npy']),
+                output_directory=output_folder
+            )
+            config_manager_dict['R']=res_config_manager
+
+        if 'T' in mode:
+            dispath_config_manager = self.dispatch_config_manager(
+                name="Dispatch",
+                root_directory=input_folder,
+                output_directory=output_folder,
+                input_directories=dict(params=case),
+                required_input_files=dict(case=['prods_charac.csv', 'params_res.json'],params=['params_opf.json'])
+            )
+            dispath_config_manager.validate_configuration()
+            config_manager_dict['T']=dispath_config_manager
+
+        if 'D' in mode:
+            loss_config_manager = self.loss_config_manager(
+                name="Loss",
+                root_directory=input_folder,
+                output_directory=output_folder,
+                input_directories=dict(params=case),
+                required_input_files=dict(params=['params_loss.json'])
+            )
+            config_manager_dict['D']=loss_config_manager
+
+        return config_manager_dict
+
