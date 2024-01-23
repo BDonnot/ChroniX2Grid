@@ -19,20 +19,21 @@ def generate_a_scenario_wrapper(args):
     (path_env, name_gen, gen_type, output_dir,
         start_date, dt, scen_id, load_seed, renew_seed,
         gen_p_forecast_seed, handle_loss, files_to_copy,
-        save_ref_curve, day_lag, tol_zero, debug) = args
+        save_ref_curve, day_lag, tol_zero, debug, load_weekly_pattern) = args
     res_gen = generate_a_scenario(path_env,
-                                name_gen, gen_type,
-                                output_dir,
-                                start_date, dt,
-                                scen_id,
-                                load_seed, renew_seed, 
-                                gen_p_forecast_seed,
-                                handle_loss,
-                                files_to_copy=files_to_copy,
-                                save_ref_curve=save_ref_curve,
-                                day_lag=day_lag,
-                                tol_zero=tol_zero,
-                                debug=debug)
+                                  name_gen, gen_type,
+                                  output_dir,
+                                  start_date, dt,
+                                  scen_id,
+                                  load_seed, renew_seed, 
+                                  gen_p_forecast_seed,
+                                  handle_loss,
+                                  files_to_copy=files_to_copy,
+                                  save_ref_curve=save_ref_curve,
+                                  day_lag=day_lag,
+                                  tol_zero=tol_zero,
+                                  debug=debug,
+                                  load_weekly_pattern=load_weekly_pattern)
     return res_gen
 
 
@@ -47,7 +48,8 @@ def add_data(env: grid2op.Environment.Environment,
              save_ref_curve=False,
              day_lag=6,  # TODO 6 because it's 2050
              debug=False,
-             tol_zero=1e-3
+             tol_zero=1e-3,
+             load_weekly_pattern=None,
              ):
     """This function adds some data to already existing scenarios.
     
@@ -68,6 +70,18 @@ def add_data(env: grid2op.Environment.Environment,
     with_loss: ``bool``
         Do you make sure that the generated data will not be modified too much when running with grid2op (default = True).
         Setting it to False will speed up (by quite a lot) the generation process, but will degrade the data quality.
+    load_weekly_pattern: pd.DataFrame
+        The pattern used as a reference to generate the loads.
+        
+        It sould be a dataframe with 2 columns: `datetime` and `test`.
+        
+        In the first column (`datetime`) you should have time stamp (format "%Y-%m-%d %H:%M:%S" 
+        *eg* `2017-01-07 23:55:00`). The second oui should have a number "approximately one" which
+        gives the relative ratio of demand for the whole grid at this time stamp.
+        
+        We only tested this when the data was given at 5 minutes resolution (two consecutive rows are 
+        distant from 5 minutes) and with the equivalent of 2 years of data. It might work
+        (or not) in other cases...
         
     """
     # required parameters
@@ -126,7 +140,8 @@ def add_data(env: grid2op.Environment.Environment,
                           save_ref_curve,
                           day_lag,
                           tol_zero,
-                          debug
+                          debug,
+                          load_weekly_pattern
                           ))
     if nb_core == 1:
         for args in argss:

@@ -128,7 +128,8 @@ def generate_loads(path_env,
                    number_of_minutes,
                    generic_params,
                    load_q_from_p_coeff_default=0.7,
-                   day_lag=6):
+                   day_lag=6,
+                   load_weekly_pattern=None):
     """
     This function generates the load for each consumption on a grid
 
@@ -177,7 +178,10 @@ def generate_loads(path_env,
     
     loads_charac = pd.read_csv(os.path.join(path_env, "loads_charac.csv"), sep=",")
     gen_charac = pd.read_csv(os.path.join(path_env, "prods_charac.csv"), sep=",")
-    load_weekly_pattern = pd.read_csv(os.path.join(ref_pattern_path, "load_weekly_pattern.csv"), sep=",")
+    if load_weekly_pattern is None:
+        load_weekly_pattern = pd.read_csv(os.path.join(ref_pattern_path, "load_weekly_pattern.csv"), sep=",")
+    else:
+        load_weekly_pattern = pd.DataFrame(load_weekly_pattern)
     
     if new_forecasts:
         load_p, load_p_forecasted, load_ref_curve = generate_new_loads(load_seed,

@@ -922,7 +922,8 @@ def generate_a_scenario(path_env,
                         save_ref_curve=False,
                         day_lag=6, # TODO 6 because it's 2050
                         tol_zero=1e-3,
-                        debug=True  # TODO more feature !
+                        debug=True,  # TODO more feature !
+                        load_weekly_pattern=None,
                         ):
     """This function generates and save the data for a scenario.
     
@@ -987,7 +988,8 @@ def generate_a_scenario(path_env,
                           dt,
                           number_of_minutes,
                           generic_params,
-                          day_lag=day_lag 
+                          day_lag=day_lag,
+                          load_weekly_pattern=load_weekly_pattern 
                           )
     (new_forecasts, forecasts_params, load_params, loads_charac,
      load_p, load_q, load_p_forecasted, load_q_forecasted, load_ref) = tmp_
