@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import json
 import shutil
 import time
+import grid2op.Environment
 import pandas as pd
 import os
 import cvxpy as cp
@@ -23,6 +24,7 @@ from grid2op.Parameters import Parameters
 from grid2op.Chronics import FromNPY
 from grid2op.Action import DontAct
 from grid2op.Opponent import NeverAttackBudget, BaseOpponent
+from grid2op.Exceptions import Grid2OpException
 from lightsim2grid import LightSimBackend
 
 
@@ -139,7 +141,15 @@ def generate_renewable_energy_sources(path_env, renew_seed, start_date_dt, end_d
 def generate_economic_dispatch(path_env, start_date_dt, end_date_dt, dt, number_of_minutes, generic_params, 
                                load_p, prod_solar, prod_wind, name_gen, gen_type, scenario_id, final_gen_p,
                                gens_charac,
-                               opf_params):
+                               opf_params,
+                               pypsa_debug_add_inf_gen=False,
+                               pypsa_debug_add_thermal=True,
+                               pypsa_debug_add_hydro=True,
+                               pypsa_debug_add_nuc=True,
+                               pypsa_debug_add_solar=True,
+                               pypsa_debug_add_wind=True,
+                               pypsa_debug_add_slack=True,
+                               ):
     """This function emulates a perfect market where all productions need to meet the demand at the minimal cost.
     
     It does not consider limit on powerline, nor contigencies etc. The power network does not exist here. Only the ramps and
@@ -179,6 +189,7 @@ def generate_economic_dispatch(path_env, start_date_dt, end_date_dt, dt, number_
     _type_
         _description_
     """
+    error_ = None
     
     load = pd.DataFrame(load_p.sum(axis=1))
     total_solar = prod_solar.sum(axis=1)
@@ -189,7 +200,15 @@ def generate_economic_dispatch(path_env, start_date_dt, end_date_dt, dt, number_
     gens_charac_this["pmax"] = gens_charac_this["Pmax"]
     gens_charac_this["pmin"] = gens_charac_this["Pmin"]
     gens_charac_this["cost_per_mw"] = gens_charac_this["marginal_cost"]
-    economic_dispatch = PypsaDispatcher.from_dataframe(gens_charac_this)
+    economic_dispatch = PypsaDispatcher.from_dataframe(gens_charac_this,
+                                                       pypsa_debug_add_inf_gen=pypsa_debug_add_inf_gen,
+                                                       pypsa_debug_add_thermal=pypsa_debug_add_thermal,
+                                                       pypsa_debug_add_hydro=pypsa_debug_add_hydro,
+                                                       pypsa_debug_add_nuc=pypsa_debug_add_nuc,
+                                                       pypsa_debug_add_solar=pypsa_debug_add_solar,
+                                                       pypsa_debug_add_wind=pypsa_debug_add_wind,
+                                                       pypsa_debug_add_slack=pypsa_debug_add_slack,
+                                                       )
     
     # need to hack it to work...
     n_gen = len(name_gen)
@@ -213,7 +232,7 @@ def generate_economic_dispatch(path_env, start_date_dt, end_date_dt, dt, number_
     
     if res_dispatch is None:     
         error_ = RuntimeError("Pypsa failed to find a solution")
-        return None, None, None, error_
+        return None, None, None, None, error_
     
     # now assign the results
     final_gen_p = 1.0 * final_gen_p  # copy the data frame to avoid modify the original one
@@ -232,7 +251,9 @@ def generate_economic_dispatch(path_env, start_date_dt, end_date_dt, dt, number_
     
     total_wind_curt = total_wind.values.sum() - res_dispatch.chronix.prods_dispatch['agg_wind'].values.sum()
     total_solar_curt = total_solar.values[mask_solar].sum() - res_dispatch.chronix.prods_dispatch['agg_solar'].values[mask_solar].sum()
-    return final_gen_p, total_wind_curt, total_solar_curt, hydro_constraints, None
+    # error_ is None at this stage
+    return final_gen_p, total_wind_curt, total_solar_curt, hydro_constraints, error_
+
     
     
 def _adjust_gens(all_loss_orig,
@@ -255,6 +276,7 @@ def _adjust_gens(all_loss_orig,
                  iter_quality_decrease=50,  # acept a reduction of the quality after this number of iteration
                  percentile_quality_decrease=99,
                  hydro_constraints=None,
+                 backend_kwargs_data=None,
                  ):
     """This function is an auxilliary function.
     
@@ -302,6 +324,8 @@ def _adjust_gens(all_loss_orig,
     _type_
         _description_
     """
+    if backend_kwargs_data is None:
+        backend_kwargs_data = {}
     quality_ = None
     error_ = None
     if np.any(~np.isfinite(gen_p)):
@@ -354,9 +378,10 @@ def _adjust_gens(all_loss_orig,
         load = load_without_loss + all_loss - np.sum(res_gen_p[:,~env_for_loss.gen_redispatchable], axis=1)
         scale_for_loads =  np.repeat(scaling_factor.reshape(1,-1), total_step, axis=0)
         target_vector = res_gen_p[:,env_for_loss.gen_redispatchable] / scaling_factor         
+        assert (target_vector <= 1.0).all(), "possible error detected in the computation of the AC losses: some generators have a target above their pmax!"
         
         #### cvxpy
-        p_t = cp.Variable(shape=(total_step,total_gen))
+        p_t = cp.Variable(shape=(total_step, total_gen))
         real_p = cp.multiply(p_t, scale_for_loads)
         
         constraints = [p_t >= p_min,
@@ -365,15 +390,28 @@ def _adjust_gens(all_loss_orig,
                        p_t[1:,:] - p_t[:-1,:] <= ramp_max,
                        cp.sum(real_p, axis=1) == load.reshape(-1),
                       ]
-        cost = cp.sum_squares(p_t - target_vector) + cp.norm1(cp.multiply(p_t, turned_off_orig))
+        # for some environment (on more realistic data), we need to put a constant before the norm1
+        # otherwise it diverges
+        cost = cp.sum_squares(p_t - target_vector) + 1e-2 * cp.norm1(cp.multiply(p_t, turned_off_orig))
         prob = cp.Problem(cp.Minimize(cost), constraints)
         try:
             res = prob.solve()
         except cp.error.SolverError as exc_:
-            error_ = RuntimeError(f"cvxpy failed to find a solution at iteration {iter_num}, error {exc_}")
-            res_gen_p = None
-            quality_ = None
-            break
+            # we try different tolerance to increase the "likelyhood"
+            # of convergence, and also because we do not really care in this routine
+            # to be optimal
+            print("cvxpy failed with given tolerance, trying to relax them to 1e-4")
+            try:
+                res = prob.solve(verbose=True, eps_abs=1e-4, eps_rel=1e-4)
+            except cp.error.SolverError as exc_:
+                print("cvxpy failed with given tolerance, trying to relax them to 1e-3")
+                try:
+                    res = prob.solve(verbose=True, eps_abs=1e-3, eps_rel=1e-3)
+                except cp.error.SolverError as exc_:
+                    error_ = RuntimeError(f"cvxpy failed to find a solution at iteration {iter_num}, error {exc_}")
+                    res_gen_p = None
+                    quality_ = None
+                    break
         
         if not np.isfinite(res):
             error_ = RuntimeError(f"cvxpy failed to find a solution at iteration {iter_num}, and return a non finite cost")
@@ -402,26 +440,33 @@ def _adjust_gens(all_loss_orig,
                 id_redisp += 1
         
         # re evaluate the losses
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore")
-            env_fixed = grid2op.make(
-                env_path,
-                test=True,
-                # grid_path=grid_path, # assign it the 118 grid
-                param=env_param,
-                backend=LightSimBackend(),
-                chronics_class=FromNPY,
-                # chronics_path=path_chronix2grid,
-                data_feeding_kwargs={"load_p": load_p,
-                                     "load_q": load_q,
-                                     "prod_p": 1.0 * res_gen_p,
-                                     "prod_v": gen_v},
-                opponent_budget_per_ts=0.,
-                opponent_init_budget=0.,
-                opponent_class=BaseOpponent,
-                opponent_budget_class=NeverAttackBudget,
-                opponent_action_class=DontAct,
-                )
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                env_fixed = grid2op.make(
+                    env_path,
+                    test=True,
+                    # grid_path=grid_path, # assign it the 118 grid
+                    param=env_param,
+                    backend=LightSimBackend(**backend_kwargs_data),
+                    chronics_class=FromNPY,
+                    # chronics_path=path_chronix2grid,
+                    data_feeding_kwargs={"load_p": load_p,
+                                         "load_q": load_q,
+                                         "prod_p": 1.0 * res_gen_p,
+                                         "prod_v": gen_v},
+                    opponent_budget_per_ts=0.,
+                    opponent_init_budget=0.,
+                    opponent_class=BaseOpponent,
+                    opponent_budget_class=NeverAttackBudget,
+                    opponent_action_class=DontAct,
+                    )
+        except Grid2OpException as exc_:
+            error_ = RuntimeError(f"grid2op cannot create the environment at iteration {iter_num}, error {exc_}")
+            res_gen_p = None
+            quality_ = None
+            break
+        
         diff_ = np.full((env_fixed.max_episode_duration(), env_fixed.n_gen), fill_value=np.NaN)
         all_loss[:] = np.NaN
         
@@ -435,6 +480,12 @@ def _adjust_gens(all_loss_orig,
             obs, reward, done, info = env_fixed.step(env_fixed.action_space())
             i += 1
             if done:
+                if info["exception"]:
+                    # there is a powerflow error here
+                    res_gen_p = None
+                    quality_ = None
+                    error_ = RuntimeError(f"lightsim2grid cannot compute powerflow at iteration {iter_num}, error {info['exception']}")
+                    return res_gen_p, error_, quality_
                 break
             all_loss[i] = np.sum(obs.gen_p) - np.sum(obs.load_p)
             diff_[i] = obs.gen_p - res_gen_p[i]
@@ -476,18 +527,27 @@ def _adjust_gens(all_loss_orig,
     return res_gen_p, error_, quality_
 
 
-def _fix_losses_one_scenario(env_for_loss,
-                            scenario_id,
-                            params,
-                            env_path,
-                            env_param,
-                            load_df,
-                            threshold_stop=0.05,  # decide I stop when the data move of less of 0.5 MW at maximum
-                            max_iter=100,  # maximum number of iteration
-                            iter_quality_decrease=20,  # after 20 iteration accept a degradation in the quality
-                            percentile_quality_decrease=99,  # replace the "at maximum" by "percentile 99%"
-                            hydro_constraints=None,
-                            ):
+def _fix_losses_one_scenario(env_for_loss : grid2op.Environment.Environment,
+                             scenario_id,
+                             params,
+                             env_path,
+                             env_param,
+                             load_df,
+                             *,
+                             threshold_stop=0.05,  # decide I stop when the data move of less of 0.5 MW at maximum
+                             max_iter=100,  # maximum number of iteration
+                             iter_quality_decrease=20,  # after 20 iteration accept a degradation in the quality
+                             percentile_quality_decrease=99,  # replace the "at maximum" by "percentile 99%"
+                             hydro_constraints=None,
+                             backend_kwargs_data=None,                 
+                             pypsa_debug_add_inf_gen=False,
+                             pypsa_debug_add_thermal=True,
+                             pypsa_debug_add_hydro=True,
+                             pypsa_debug_add_nuc=True,
+                             pypsa_debug_add_solar=True,
+                             pypsa_debug_add_wind=True,
+                             pypsa_debug_add_slack=True,
+                             ):
     """This function is an auxilliary function.
     
     Like its main one (see handle_losses) it is here to make sure that if you run an AC model with the data generated, 
@@ -542,6 +602,9 @@ def _fix_losses_one_scenario(env_for_loss,
     while not done:
         obs, reward, done, info = env_for_loss.step(env_for_loss.action_space())
         if done:
+            if info["exception"]:
+                # there is a powerflow error here
+                return None, f"Error at first losses computation: {info['exception']}", None
             break
         i += 1
         all_loss_orig[i] = np.sum(obs.gen_p) - np.sum(obs.load_p)
@@ -560,7 +623,15 @@ def _fix_losses_one_scenario(env_for_loss,
     df["pmax"] = df["Pmax"]
     df["pmin"] = df["Pmin"]
     df["cost_per_mw"] = df["marginal_cost"]
-    economic_dispatch = PypsaDispatcher.from_dataframe(df)
+    economic_dispatch = PypsaDispatcher.from_dataframe(df,
+                                                       pypsa_debug_add_inf_gen=pypsa_debug_add_inf_gen,
+                                                       pypsa_debug_add_thermal=pypsa_debug_add_thermal,
+                                                       pypsa_debug_add_hydro=pypsa_debug_add_hydro,
+                                                       pypsa_debug_add_nuc=pypsa_debug_add_nuc,
+                                                       pypsa_debug_add_solar=pypsa_debug_add_solar,
+                                                       pypsa_debug_add_wind=pypsa_debug_add_wind,
+                                                       pypsa_debug_add_slack=pypsa_debug_add_slack,
+                                                       )
     economic_dispatch.read_hydro_guide_curves(os.path.join(ref_pattern_path, 'hydro_french.csv'))
     economic_dispatch._chronix_scenario = ChroniXScenario(loads=1.0 * load_df,
                                                           prods=pd.DataFrame(1.0 * gen_p_orig, columns=env_for_loss.name_gen),
@@ -598,7 +669,8 @@ def _fix_losses_one_scenario(env_for_loss,
                                                max_iter=max_iter,
                                                iter_quality_decrease=iter_quality_decrease,
                                                percentile_quality_decrease=percentile_quality_decrease,
-                                               hydro_constraints=hydro_constraints)
+                                               hydro_constraints=hydro_constraints,
+                                               backend_kwargs_data=backend_kwargs_data)
     
     if error_ is not None:
         # the procedure failed
@@ -607,31 +679,38 @@ def _fix_losses_one_scenario(env_for_loss,
     return res_gen_p, error_, quality_
 
 def make_env_for_loss(path_env, env_param, load_p, load_q, final_gen_p,
-                      gen_v, start_date_dt, dt_dt):
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore")
-        env_for_loss = grid2op.make(
-            path_env,
-            test=True,
-            # grid_path=grid_path, # assign it the 118 grid
-            param=env_param,
-            backend=LightSimBackend(),
-            chronics_class=FromNPY,
-            # chronics_path=path_chronix2grid,
-            data_feeding_kwargs={"load_p": load_p.values,  # np.concatenate([load_p.values[0].reshape(1,-1), load_p.values]),
+                      gen_v, start_date_dt, dt_dt, backend_kwargs_data):
+    if backend_kwargs_data is None:
+        backend_kwargs_data = {}
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            env_for_loss = grid2op.make(
+                path_env,
+                test=True,
+                # grid_path=grid_path, # assign it the 118 grid
+                param=env_param,
+                backend=LightSimBackend(**backend_kwargs_data),
+                chronics_class=FromNPY,
+                # chronics_path=path_chronix2grid,
+                data_feeding_kwargs={"load_p": load_p.values,  # np.concatenate([load_p.values[0].reshape(1,-1), load_p.values]),
                                     "load_q": load_q.values,  # np.concatenate([load_q.values[0].reshape(1,-1), load_q.values]),
                                     "prod_p": 1.0 * final_gen_p.values,  # 1.0 * np.concatenate([final_gen_p.values[0].reshape(1,-1), final_gen_p.values]),
                                     "prod_v": gen_v,  # np.concatenate([gen_v[0].reshape(1,-1), gen_v])}
                                     "start_datetime": start_date_dt,
                                     "time_interval": dt_dt,
-            },
-            opponent_budget_per_ts=0.,
-            opponent_init_budget=0.,
-            opponent_class=BaseOpponent,
-            opponent_budget_class=NeverAttackBudget,
-            opponent_action_class=DontAct,
-            )
-    return env_for_loss
+                },
+                opponent_budget_per_ts=0.,
+                opponent_init_budget=0.,
+                opponent_class=BaseOpponent,
+                opponent_budget_class=NeverAttackBudget,
+                opponent_action_class=DontAct,
+                _add_to_name="_env_for_loss"
+                )
+    except Grid2OpException as exc_:
+        return None, exc_
+    return env_for_loss, None
+
 
 def handle_losses(path_env,
                   n_gen,
@@ -643,6 +722,7 @@ def handle_losses(path_env,
                   start_date_dt,
                   dt_dt,
                   scenario_id, 
+                  *,
                   PmaxErrorCorrRatio=0.9,
                   RampErrorCorrRatio=0.95,
                   threshold_stop=0.05,
@@ -650,6 +730,14 @@ def handle_losses(path_env,
                   iter_quality_decrease=20,  # after 20 iteration accept a degradation in the quality
                   percentile_quality_decrease=99,  # replace the "at maximum" by "percentile 99%"
                   hydro_constraints=None,
+                  backend_kwargs_data=None,
+                  pypsa_debug_add_inf_gen=False,
+                  pypsa_debug_add_thermal=True,
+                  pypsa_debug_add_hydro=True,
+                  pypsa_debug_add_nuc=True,
+                  pypsa_debug_add_solar=True,
+                  pypsa_debug_add_wind=True,
+                  pypsa_debug_add_slack=True,
                   ):
     """This function is here to make sure that if you run an AC model with the data generated, then the generator setpoints will not change too much 
     (less than `threshold_stop` MW)
@@ -704,11 +792,16 @@ def handle_losses(path_env,
         
     env_param = Parameters()
     env_param.NO_OVERFLOW_DISCONNECTION = True
-    gen_v = np.tile(np.array([float(gens_charac.loc[gens_charac["name"] == nm_gen].V) for nm_gen in name_gen ]),
+    gen_v = np.tile(np.array([float(gens_charac.loc[gens_charac["name"] == nm_gen].V.iloc[0]) for nm_gen in name_gen ]),
                     load_p.shape[0]).reshape(-1, n_gen)
     
-    env_for_loss = make_env_for_loss(path_env, env_param, load_p, load_q,
-                                     final_gen_p, gen_v, start_date_dt, dt_dt)
+    env_for_loss, exc_ = make_env_for_loss(path_env, env_param, load_p, load_q,
+                                           final_gen_p, gen_v, start_date_dt, dt_dt,
+                                           backend_kwargs_data=backend_kwargs_data)
+    
+    if exc_ is not None:
+        return None, exc_, None, None
+    
     res_gen_p, error_, quality_ = _fix_losses_one_scenario(env_for_loss,
                                                            scenario_id,
                                                            loss_param,
@@ -722,6 +815,14 @@ def handle_losses(path_env,
                                                            # replace the "at maximum" by "percentile 99%"
                                                            percentile_quality_decrease=percentile_quality_decrease,
                                                            hydro_constraints=hydro_constraints,  
+                                                           backend_kwargs_data=backend_kwargs_data,
+                                                           pypsa_debug_add_inf_gen=pypsa_debug_add_inf_gen,
+                                                           pypsa_debug_add_thermal=pypsa_debug_add_thermal,
+                                                           pypsa_debug_add_hydro=pypsa_debug_add_hydro,
+                                                           pypsa_debug_add_nuc=pypsa_debug_add_nuc,
+                                                           pypsa_debug_add_solar=pypsa_debug_add_solar,
+                                                           pypsa_debug_add_wind=pypsa_debug_add_wind,
+                                                           pypsa_debug_add_slack=pypsa_debug_add_slack,
                                                            )
     if error_ is not None:
         return None, error_, None, env_for_loss
@@ -902,6 +1003,7 @@ def save_meta_data(this_scen_path,
     if wind_ref is not None:
         np.save(file=os.path.join(this_scen_path, "wind_ref.npy"), arr=wind_ref)
 
+
 def generate_a_scenario(path_env,
                         name_gen,
                         gen_type,
@@ -912,6 +1014,7 @@ def generate_a_scenario(path_env,
                         load_seed,
                         renew_seed,
                         gen_p_forecast_seed,
+                        *,
                         handle_loss=True,
                         nb_steps=None,
                         PmaxErrorCorrRatio=0.9,
@@ -922,7 +1025,16 @@ def generate_a_scenario(path_env,
                         save_ref_curve=False,
                         day_lag=6, # TODO 6 because it's 2050
                         tol_zero=1e-3,
-                        debug=True  # TODO more feature !
+                        debug=True,  # TODO more feature !
+                        load_weekly_pattern=None,
+                        backend_kwargs_data=None,
+                        pypsa_debug_add_inf_gen=False,
+                        pypsa_debug_add_thermal=True,
+                        pypsa_debug_add_hydro=True,
+                        pypsa_debug_add_nuc=True,
+                        pypsa_debug_add_solar=True,
+                        pypsa_debug_add_wind=True,
+                        pypsa_debug_add_slack=True,
                         ):
     """This function generates and save the data for a scenario.
     
@@ -987,7 +1099,8 @@ def generate_a_scenario(path_env,
                           dt,
                           number_of_minutes,
                           generic_params,
-                          day_lag=day_lag 
+                          day_lag=day_lag,
+                          load_weekly_pattern=load_weekly_pattern 
                           )
     (new_forecasts, forecasts_params, load_params, loads_charac,
      load_p, load_q, load_p_forecasted, load_q_forecasted, load_ref) = tmp_
@@ -1012,7 +1125,6 @@ def generate_a_scenario(path_env,
         prod_wind = apply_maintenance_wind_farm(extra_winds_params, prod_wind_init,
                                                 start_date_dt, end_date_dt, dt,
                                                 renew_prng)
-        
     if prod_solar.isna().any().any():
         error_ = RuntimeError("Nan generated in solar data")
         return error_, None, None, None, None, None, None, None
@@ -1041,11 +1153,30 @@ def generate_a_scenario(path_env,
     res_disp = generate_economic_dispatch(path_env, start_date_dt, end_date_dt, dt, number_of_minutes,
                                           generic_params,
                                           load_p, prod_solar, prod_wind, name_gen, gen_type, scenario_id,
-                                          final_gen_p, gens_charac, opf_params)
+                                          final_gen_p, gens_charac, opf_params,                
+                                          pypsa_debug_add_inf_gen=pypsa_debug_add_inf_gen,
+                                          pypsa_debug_add_thermal=pypsa_debug_add_thermal,
+                                          pypsa_debug_add_hydro=pypsa_debug_add_hydro,
+                                          pypsa_debug_add_nuc=pypsa_debug_add_nuc,
+                                          pypsa_debug_add_solar=pypsa_debug_add_solar,
+                                          pypsa_debug_add_wind=pypsa_debug_add_wind,
+                                          pypsa_debug_add_slack=pypsa_debug_add_slack,
+                                          )
     gen_p_after_dispatch, total_wind_curt_opf, total_solar_curt_opf, hydro_constraints, error_ = res_disp
-    
     if error_ is not None:
         # TODO log that !
+        return error_, None, None, None, None, None, None, None
+    
+    if ((pypsa_debug_add_inf_gen is not False) or
+         (pypsa_debug_add_thermal is not True) or 
+         (pypsa_debug_add_hydro is not True) or 
+         (pypsa_debug_add_nuc is not True) or 
+         (pypsa_debug_add_solar is not True) or 
+         (pypsa_debug_add_wind is not True) or 
+         (pypsa_debug_add_slack is not True)):
+        # one of the pypsa flag is not to its default, data cannot be generated like that
+        error_ = ("One of the pypsa flag is set to a 'debug' mode, data will not be generated further. "
+                 "If you have a problem, it should not be related to the 'OPF'")
         return error_, None, None, None, None, None, None, None
     
     # now try to move the generators so that when I run an AC powerflow, the setpoint of generators does not change "too much"
@@ -1061,11 +1192,19 @@ def generate_a_scenario(path_env,
                                                                      start_date_dt,
                                                                      dt_dt,
                                                                      scenario_id, 
+                                                                     pypsa_debug_add_inf_gen=pypsa_debug_add_inf_gen,
+                                                                     pypsa_debug_add_thermal=pypsa_debug_add_thermal,
+                                                                     pypsa_debug_add_hydro=pypsa_debug_add_hydro,
+                                                                     pypsa_debug_add_nuc=pypsa_debug_add_nuc,
+                                                                     pypsa_debug_add_solar=pypsa_debug_add_solar,
+                                                                     pypsa_debug_add_wind=pypsa_debug_add_wind,
+                                                                     pypsa_debug_add_slack=pypsa_debug_add_slack,
                                                                      PmaxErrorCorrRatio=PmaxErrorCorrRatio,
                                                                      RampErrorCorrRatio=RampErrorCorrRatio,
                                                                      threshold_stop=threshold_stop,
                                                                      max_iter=max_iter,
-                                                                     hydro_constraints=hydro_constraints)
+                                                                     hydro_constraints=hydro_constraints,
+                                                                     backend_kwargs_data=backend_kwargs_data)
         if error_ is not None:
             # TODO log that !
             return error_, None, None, None, None, None, None, None
@@ -1077,11 +1216,14 @@ def generate_a_scenario(path_env,
         env_param.NO_OVERFLOW_DISCONNECTION = True
         gen_v = np.tile(np.array([float(gens_charac.loc[gens_charac["name"] == nm_gen].V) for nm_gen in name_gen ]),
                         load_p.shape[0]).reshape(-1, n_gen)
-        env_for_loss = make_env_for_loss(path_env, env_param,
-                                         load_p, load_q,
-                                         final_gen_p, gen_v,
-                                         start_date_dt, dt_dt)
-    
+        env_for_loss, exc_ = make_env_for_loss(path_env, env_param,
+                                               load_p, load_q,
+                                               final_gen_p, gen_v,
+                                               start_date_dt, dt_dt,
+                                               backend_kwargs_data=backend_kwargs_data)
+        if exc_ is not None:
+            return exc_, None, None, None, None, None, None, None
+            
     prng = default_rng(gen_p_forecast_seed)
     beg_forca = time.perf_counter()
     tmp_ = generate_forecasts_gen(new_forecasts,

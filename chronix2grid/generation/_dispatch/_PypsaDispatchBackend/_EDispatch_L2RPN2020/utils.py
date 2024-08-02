@@ -389,8 +389,18 @@ def run_opf(net,
         gen_max[slack_name] = slack_pmax
     
     if slack_name is not None and "slack_ramp_limit_ratio" in params:
-        net.generators.ramp_limit_up[slack_name] *= float(params["slack_ramp_limit_ratio"])
-        net.generators.ramp_limit_down[slack_name] *= float(params["slack_ramp_limit_ratio"])
+        if slack_name in net.generators.ramp_limit_up:
+            net.generators.ramp_limit_up[slack_name] *= float(params["slack_ramp_limit_ratio"])
+        else:
+            if not net._pypsa_debug_flags["slack_maybe_ignored"]:
+                # slack should be there !
+                raise RuntimeError("Slack is missing from the grid generator but should be there")
+        if slack_name in net.generators.ramp_limit_down:
+            net.generators.ramp_limit_down[slack_name] *= float(params["slack_ramp_limit_ratio"])
+        else:
+            if not net._pypsa_debug_flags["slack_maybe_ignored"]:
+                # slack should be there !
+                raise RuntimeError("Slack is missing from the grid generator but should be there")
     
     if gen_max_pu_t is not None:
         # addition contraint on the max_pu, used for example when splitting the loss
@@ -412,6 +422,52 @@ def run_opf(net,
     net.generators_t.p_max_pu = pd.concat([gen_max], axis=1)
     net.generators_t.p_min_pu = pd.concat([gen_min], axis=1)
     
+    # raise error for non feasible configurations
+    if (net.generators["p_min_pu"].values < 0.).any():
+        raise RuntimeError(f"Wrong input data (prods_charac.csv) there are some negative "
+                           f"p_min for {net.generators.loc[net.generators['p_min_pu'].values < 0.].index}")
+    if (net.generators["p_max_pu"].values < 0.).any():
+        raise RuntimeError(f"Wrong input data (prods_charac.csv) there are some negative "
+                           f"p_max for {net.generators.loc[net.generators['p_max_pu'].values < 0.].index}")
+    if (net.generators["ramp_limit_up"].values < 0.).any():
+        raise RuntimeError(f"Wrong input data (prods_charac.csv) there are some negative "
+                           f"ramps (up) for {net.generators.loc[net.generators['ramp_limit_up'].values < 0.].index}")
+    if (net.generators["ramp_limit_down"].values < 0.).any():
+        raise RuntimeError(f"Wrong input data (prods_charac.csv) there are some negative ramps "
+                           f"(down) for {net.generators.loc[net.generators['ramp_limit_down'].values < 0.].index}")
+    if (net.generators_t.p_min_pu.min() > 1.).any():
+        debug_info = net.generators_t.p_min_pu.min()
+        raise RuntimeError(f"A generator would have a p_min above its pmax ! most likely "
+                           f"the slack... Check {debug_info.loc[debug_info > 1.].index.values}")
+    if ((net.generators_t["p_max_pu"] - net.generators_t["p_min_pu"]) < 0.).any().any():
+        tmp_debug = ((net.generators_t["p_max_pu"] - net.generators_t["p_min_pu"]) < 0.).any()
+        raise RuntimeError(f"Invalid configuration: infeasibility detected for some "
+                           f"generators (most likely the slack), check generator "
+                           f"{tmp_debug[tmp_debug].index.values}")
+    
+    # try to detect some non feasible states
+    if "agg_wind" in net.generators_t["p_max_pu"]:
+        total_wind = (net.generators.loc["agg_wind", "p_nom"] * net.generators_t["p_max_pu"]["agg_wind"]).values
+    else:
+        total_wind = 0.
+    if "agg_solar" in net.generators_t["p_max_pu"]:
+        total_solar = (net.generators.loc["agg_solar", "p_nom"] * net.generators_t["p_max_pu"]["agg_solar"]).values
+    else:
+        total_solar = 0.
+    total_pmax = net.generators.loc[(net.generators.index != "agg_wind") & (net.generators.index != "agg_solar"), "p_nom"].sum()
+    tmp_ = net.generators.loc[(net.generators.index != "agg_wind") & (net.generators.index != "agg_solar"), ["p_nom", "p_min_pu"]].values
+    total_pmin = (tmp_[:, 0] * tmp_[:, 1]).sum()
+    min_net_demand = demand["agg_load"].values - total_solar - total_solar 
+    if (min_net_demand > total_pmax).any():
+        return None, RuntimeError("Some non feasible time steps are found (net demand above pmax of controlable generators)")
+    if (demand["agg_load"].values < total_pmin).any():
+        return None, RuntimeError("Some non feasible time steps are found (demand [with full "
+                                  "curtailment of solar and wind] is below pmin of "
+                                  "controlable generators)")
+    
+    # TODO check also feasible ramps
+    # tmp_ = net.generators.loc[(net.generators.index != "agg_wind") & (net.generators.index != "agg_solar"), ["p_nom", "ramp_limit_up", "ramp_limit_down"]].values
+
     # ++  ++  ++  ++
     # Run Linear OPF
     status, termination_condition = net.lopf(net.snapshots, **kwargs)

@@ -46,6 +46,10 @@ jobs:
           name: Run integration tests
           # This assumes pytest is installed via the install-package step above
           command: pytest tests/integration_tests
+      - run:
+          name: Run some grid2op tests (test that it does not break grid2op `FromChronix2grid`)
+          # This assumes pytest is installed via the install-package step above
+          command: pytest tests/grid2op_tests
 
 
 # Invoke jobs via workflows

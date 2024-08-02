@@ -6,4 +6,4 @@
 # SPDX-License-Identifier: MPL-2.0
 # This file is part of Chronix2Grid, A python package to generate "en-masse" chronics for loads and productions (thermal, renewable)
 
-___version__ = "1.2.0.post1"
+___version__ = "1.2.1"

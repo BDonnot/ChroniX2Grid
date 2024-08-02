@@ -9,7 +9,9 @@
 import argparse
 import os
 import time
+from typing import Dict, Literal
 
+import numpy as np
 import pandas as pd
 import pypsa
 
@@ -37,8 +39,11 @@ def main_run_disptach(pypsa_net,
     # values passed by the users and params
     if gen_constraints is None:
         gen_constraints = {}
-    gen_constraints = update_gen_constrains(gen_constraints)  
-    
+
+    gen_constraints : Dict[Literal["p_min_pu", "p_max_pu"], pd.DataFrame]= update_gen_constrains(gen_constraints)  
+    for el, df in gen_constraints.items():
+        df.bfill(inplace=True)  # propagate possible NaNs "backward", good for first Na values
+        df.ffill(inplace=True)  # propagate possible NaNs "forward", good if last Na values  
     params = update_params(load.shape[0], load.index[0], params)
 
     print ('Preprocessing input data..')    
@@ -73,16 +78,46 @@ def main_run_disptach(pypsa_net,
     slack_name = None
     slack_pmin = None
     slack_pmax = None
-    if 'slack_name' in params:
-        if 'slack_pmin' in params:
+    slack_ignored_debug_flag = False  # is the slack ignored due to a debug flag
+    if 'slack_name' in params and pypsa_net._pypsa_debug_add_slack:
+        slack_name = str(params["slack_name"])
+        if slack_name not in pypsa_net.generators.index:
+            if pypsa_net._pypsa_debug_flags["slack_maybe_ignored"]:
+                if slack_name not in pypsa_net._all_gen_names:
+                    raise RuntimeError("Wrong configuration detected: make sure that the slack is a generator "
+                                    "but also a controlable one !")
+                slack_ignored_debug_flag = True  # in this case it is !
+            else:
+                print(pypsa_net.generators.index)
+                raise RuntimeError("Wrong configuration detected: make sure that the slack is a generator "
+                                "but also a controlable one !")
+                
+        if 'slack_pmin' in params and not slack_ignored_debug_flag:
             # user specified a pmin for the slack bus
-            slack_name = str(params["slack_name"])
             slack_pmin = float(params["slack_pmin"]) / float(pypsa_net.generators.loc[slack_name].p_nom)
-
-        if 'slack_pmax' in params:
+            if slack_name not in gen_constraints["p_min_pu"]:
+                gen_constraints["p_min_pu"][slack_name] = slack_pmin
+            else:
+                gen_constraints["p_min_pu"][slack_name] = np.maximum(slack_pmin, gen_constraints["p_min_pu"][slack_name].values)
+                
+            if slack_pmin < gen_constraints["p_min_pu"][slack_name].min():
+                raise RuntimeError("Wrong configuration detected: you put in 'params_opf' "
+                                   "a minimum value for the slack ('slack_pmin') below its pmin.")
+            if slack_pmin > 1.:
+                raise RuntimeError("Unfeasible parameters: slack pmin would be higher than its pmax.")
+        if 'slack_pmax' in params and not slack_ignored_debug_flag:
             # user specified a pmin for the slack bus
-            slack_name = str(params["slack_name"])
             slack_pmax = float(params["slack_pmax"]) / float(pypsa_net.generators.loc[slack_name].p_nom)
+            if slack_name not in gen_constraints["p_max_pu"]:
+                gen_constraints["p_max_pu"][slack_name] = slack_pmax
+            else:
+                gen_constraints["p_max_pu"][slack_name] = np.minimum(slack_pmin, gen_constraints["p_max_pu"][slack_name].values)
+            if slack_pmax > gen_constraints["p_max_pu"][slack_name].max():
+                raise RuntimeError("Wrong configuration detected: you put in 'params_opf' "
+                                   "a maximum value for the slack ('slack_pmax') above its pmax.")
+            if slack_pmax > 1.:
+                print("Doubtful parameters: slack pmax would be higher than its pmax, basically "
+                      "the parameters `slack_pmax` of `params_opf.json` is ignored.")
         
     error_ = False
     start = time.time()

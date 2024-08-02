@@ -19,12 +19,12 @@ sys.path.insert(0, os.path.abspath('../'))
 # -- Project information -----------------------------------------------------
 
 project = 'ChroniX2Grid'
-copyright = '2020, Antoine Marot, Mario Jothy, Nicolas Megel'
-author = 'Antoine Marot, Mario Jothy, Nicolas Megel'
+copyright = '2020, Antoine Marot, Mario Jothy, Nicolas Megel, Benjamin Donnot'
+author = 'Antoine Marot, Mario Jothy, Nicolas Megel, Benjamin Donnot'
 
 # The full version, including alpha/beta/rc tags
-release = '1.1.0.post1'
-version = '1.1'
+release = '1.2.1'
+version = '1.2'
 
 
 # -- General configuration ---------------------------------------------------

@@ -15,7 +15,7 @@ with open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
     
     
 setup(name='Chronix2Grid',
-      version='1.2.0.post1',
+      version='1.2.1',
       description='A python package to generate "en-masse" chronics for loads and productions (thermal, renewable)',
       long_description=long_description,
       long_description_content_type='text/markdown',

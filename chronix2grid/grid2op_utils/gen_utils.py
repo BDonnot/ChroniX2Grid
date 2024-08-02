@@ -166,8 +166,7 @@ def fix_forecast_ramps(nb_h,
         
         if not has_error[indx_forecasts[0]]:
             res_gen_p[indx_forecasts] = 1.0 * gen_p_after_optim[1:,:]
-            amount_curtailed_for[indx_forecasts] = curt_t.value[1:]
-            
+            amount_curtailed_for[indx_forecasts] = curt_t.value[1:]      
     # last value is not used anyway
     # res_gen_p[-1, :] = 1.0 * gen_p_after_optim[1,:]
     has_error[-nb_h:] = True
@@ -300,7 +299,9 @@ def generate_new_gen_forecasts(prng,
                                            keep_first_dim=True)
         
         # fix the value of the forecast (if above pmax or bellow pmin for example)
-        fun_fix(gen_p_for_this_type, gen_p_this_type, gen_carac_this_type["Pmax"].values)
+        fun_fix(gen_p_for_this_type,
+                gen_p_this_type,
+                gen_carac_this_type["Pmax"].values)
         
         # now put everything in the right shape
         if res_gen_p_forecasted is None:
@@ -342,19 +343,30 @@ def generate_forecasts_gen(new_forecasts,
         res_gen_p_forecasted_df = res_gen_p_forecasted_df.shift(-1)
         res_gen_p_forecasted_df.iloc[-1] = 1.0 * res_gen_p_forecasted_df.iloc[-2]
         nb_h = 1
-    
+            
     # "fix" cases where forecasts are bellow the loads => in that case scale the
     # controlable generation to be at least 1% above total demand
+    loss_before_ramps_for = 1.01
     total_gen = res_gen_p_forecasted_df.sum(axis=1)
     total_demand = load_p_forecasted.sum(axis=1)
-    mask_ko = total_gen <= total_demand
-    nb_concerned = (mask_ko).sum()
+    mask_not_enough_gen = total_gen <= loss_before_ramps_for * total_demand
+    nb_concerned = (mask_not_enough_gen).sum()
     tmp = type(env_for_loss).gen_pmax[env_for_loss.gen_redispatchable]
     tmp = tmp / tmp.sum()
-    rep_factor = np.tile(tmp.reshape(-1,1), nb_concerned).T
-    res_gen_p_forecasted_df.loc[mask_ko, type(env_for_loss).gen_redispatchable] *= (1.01 * total_demand - total_gen)[mask_ko].values.reshape(-1,1) * rep_factor
-    
-    # and fix the ramps (an optimizer, step by step)
+    rep_factor = np.tile(tmp.reshape(-1,1), nb_concerned).T  # how to split 1MW on the controlable generators
+    est_losses_mw = (loss_before_ramps_for * total_demand - total_gen)  # opposite of the loss per step
+    # we increase the controlable generation when there is not enough generation (loss positive)
+    # res_gen_p_forecasted_df.loc[mask_not_enough_gen, type(env_for_loss).gen_redispatchable] *= est_losses_mw[mask_not_enough_gen].values.reshape(-1,1) * rep_factor
+    res_gen_p_forecasted_df.loc[mask_not_enough_gen, type(env_for_loss).gen_redispatchable] += est_losses_mw[mask_not_enough_gen].values.reshape(-1,1) * rep_factor
+    # the above increase can lead to generator above pmax, when this is the case, 
+    # I cut it
+    gen_pmax = type(env_for_loss).gen_pmax
+    for gen_id, is_disp in enumerate(type(env_for_loss).gen_redispatchable):
+        if not is_disp:
+            continue
+        res_gen_p_forecasted_df.iloc[:, gen_id] = np.minimum(res_gen_p_forecasted_df.iloc[:, gen_id].values,
+                                                             gen_pmax[gen_id])
+    # and fix the ramps (for all h) (an optimizer is run t by t)
     tmp_ = fix_forecast_ramps(nb_h,
                               load_p,
                               load_p_forecasted,

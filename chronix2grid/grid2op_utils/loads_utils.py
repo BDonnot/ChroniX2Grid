@@ -10,11 +10,12 @@ import os
 import json
 import pandas as pd
 import numpy as np
+import pathlib
 
 from chronix2grid.getting_started.example.input.generation.patterns import ref_pattern_path
 from chronix2grid.generation.consumption import ConsumptionGeneratorBackend
 from chronix2grid.generation.consumption.consumption_utils import (get_seasonal_pattern,
-                                                                    compute_load_pattern)
+                                                                   compute_load_pattern)
 
 from chronix2grid.generation.consumption.generate_load import get_add_dim as get_add_dim_load
 
@@ -71,7 +72,10 @@ def generate_new_loads(load_seed,
     std_temperature_noise = float(load_params['std_temperature_noise'])
     
     # retrieve the reference curve "bar"
-    datetime_lwp = pd.to_datetime(load_weekly_pattern["datetime"], format="%Y-%m-%d %H:%M:%S")
+    if isinstance(load_weekly_pattern, pd.DataFrame):
+        datetime_lwp = pd.to_datetime(load_weekly_pattern["datetime"], format="%Y-%m-%d %H:%M:%S")
+    else:
+        raise NotImplementedError("TODO load weekly pattern !")
     isoweekday = np.array([el.isoweekday() for el in datetime_lwp])
     hour_minutes = np.array([el.hour * 60 + el.minute for el in datetime_lwp])
     load_ref = get_load_ref(loads_charac, load_params, load_weekly_pattern,
@@ -128,7 +132,8 @@ def generate_loads(path_env,
                    number_of_minutes,
                    generic_params,
                    load_q_from_p_coeff_default=0.7,
-                   day_lag=6):
+                   day_lag=6,
+                   load_weekly_pattern=None):
     """
     This function generates the load for each consumption on a grid
 
@@ -177,9 +182,20 @@ def generate_loads(path_env,
     
     loads_charac = pd.read_csv(os.path.join(path_env, "loads_charac.csv"), sep=",")
     gen_charac = pd.read_csv(os.path.join(path_env, "prods_charac.csv"), sep=",")
-    load_weekly_pattern = pd.read_csv(os.path.join(ref_pattern_path, "load_weekly_pattern.csv"), sep=",")
+    if load_weekly_pattern is None:
+        load_weekly_pattern = pd.read_csv(os.path.join(ref_pattern_path, "load_weekly_pattern.csv"), sep=",")
+    else:
+        if isinstance(load_weekly_pattern, (str, os.PathLike)):
+            load_weekly_pattern = pathlib.Path(load_weekly_pattern)
+        elif isinstance(load_weekly_pattern, (np.ndarray, pd.DataFrame)):
+            load_weekly_pattern = pd.DataFrame(load_weekly_pattern)
+        else:
+            raise TypeError("load_weekly_pattern kwargs should be either a str "
+                            "(or pathlike) or a pandas Dataframe (or numpy array) and not "
+                            f"{type(load_weekly_pattern)}")
     
     if new_forecasts:
+        # TODO load weekly pattern !
         load_p, load_p_forecasted, load_ref_curve = generate_new_loads(load_seed,
                                                                        load_params,
                                                                        forecasts_params,
@@ -197,7 +213,7 @@ def generate_loads(path_env,
                                                      load_config_manager=None,
                                                      day_lag=day_lag)
         
-        load_p, load_p_forecasted, load_ref_curve = load_generator.run(load_weekly_pattern=load_weekly_pattern,
+        load_p, load_p_forecasted, load_ref_curve = load_generator.run(load_weekly_pattern=load_weekly_pattern,  # TODO load weekly pattern
                                                                        return_ref_curve=True,
                                                                        use_legacy=False)
     

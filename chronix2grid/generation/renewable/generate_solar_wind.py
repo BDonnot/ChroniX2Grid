@@ -204,7 +204,8 @@ def main(scenario_destination_path, seed, params, prods_charac, solar_pattern,
 
     prod_wind = swutils.create_csv(
         prng,
-        wind_series, os.path.join(scenario_destination_path, 'wind_p.csv.bz2') if scenario_destination_path is not None else None,
+        wind_series,
+        os.path.join(scenario_destination_path, 'wind_p.csv.bz2') if scenario_destination_path is not None else None,
         reordering=True,
         noise=params['planned_std'],
         write_results=write_results
@@ -212,7 +213,8 @@ def main(scenario_destination_path, seed, params, prods_charac, solar_pattern,
 
     prod_p = swutils.create_csv(
         prng,
-        prods_series, os.path.join(scenario_destination_path, 'prod_p.csv.bz2') if scenario_destination_path is not None else None,
+        prods_series,
+        os.path.join(scenario_destination_path, 'prod_p.csv.bz2') if scenario_destination_path is not None else None,
         reordering=True,
         noise=params['planned_std'],
         write_results=write_results

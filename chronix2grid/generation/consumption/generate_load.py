@@ -31,8 +31,13 @@ def get_add_dim(params, loads_charac):
     return add_dim
 
 
-def main(scenario_destination_path, seed, params, loads_charac,
-         load_weekly_pattern, write_results = True, day_lag=0,
+def main(scenario_destination_path,
+         seed,
+         params,
+         loads_charac,
+         load_weekly_pattern,
+         write_results=True,
+         day_lag=0,
          return_ref_curve=False,
          use_legacy=True):
     """
